@@ -13,6 +13,7 @@ const cors = require('cors');
 const morgan = require('morgan');
 const os = require('os');
 const chalk = require('chalk');
+const https = require('https');
 
 dotenv.config({
   path: path.join(__dirname, '.env')
@@ -49,15 +50,58 @@ const CREDS_FILE = path.join(__dirname, 'admin-creds.json');
 
 // Initialize admin credentials
 function initAdminCredentials() {
-  if (!fs.existsSync(CREDS_FILE)) {
-    // const defaultPassword = bcrypt.hashSync('BahrulUlum_2025#SIGAP', 10);
-    const defaultPassword = bcrypt.hashSync(process.env.ADMIN_PASSWORD || 'admin', 10);
+  const envUsername = process.env.ADMIN_USERNAME || 'indra';
+  const envPassword = process.env.ADMIN_PASSWORD || 'indra';
+  
+  // Cek apakah file admin-creds.json ada
+  if (fs.existsSync(CREDS_FILE)) {
+    try {
+      const existingCreds = JSON.parse(fs.readFileSync(CREDS_FILE, 'utf-8'));
+      
+      // Cek apakah username di .env berbeda dengan yang ada di file
+      // Atau jika password di .env tidak match dengan hash yang ada
+      const usernameChanged = existingCreds.username !== envUsername;
+      const passwordValid = existingCreds.password && bcrypt.compareSync(envPassword, existingCreds.password);
+      
+      if (usernameChanged || !passwordValid) {
+        console.log(chalk.yellow('⚠️  Perubahan terdeteksi di .env, membuat ulang admin-creds.json...'));
+        
+        // Hapus file lama
+        fs.unlinkSync(CREDS_FILE);
+        
+        // Buat file baru dengan credential dari .env
+        const newPassword = bcrypt.hashSync(envPassword, 10);
+        fs.writeFileSync(CREDS_FILE, JSON.stringify({
+          username: envUsername,
+          password: newPassword
+        }, null, 2));
+        
+        console.log(chalk.green(`✅ Admin credentials diperbarui (username: ${envUsername})`));
+      } else {
+        console.log(chalk.gray('ℹ️  Admin credentials sudah sesuai dengan .env'));
+      }
+    } catch (error) {
+      console.error(chalk.red('❌ Error membaca admin-creds.json, membuat ulang...'));
+      fs.unlinkSync(CREDS_FILE);
+      
+      // Buat file baru
+      const newPassword = bcrypt.hashSync(envPassword, 10);
+      fs.writeFileSync(CREDS_FILE, JSON.stringify({
+        username: envUsername,
+        password: newPassword
+      }, null, 2));
+      
+      console.log(chalk.green(`✅ Admin credentials dibuat (username: ${envUsername})`));
+    }
+  } else {
+    // File tidak ada, buat baru
+    const newPassword = bcrypt.hashSync(envPassword, 10);
     fs.writeFileSync(CREDS_FILE, JSON.stringify({
-      username: process.env.ADMIN_USERNAME || 'admin',
-      password: defaultPassword
+      username: envUsername,
+      password: newPassword
     }, null, 2));
-    // console.log('✅ Admin credentials created (username: admin, password: BahrulUlum_2025#SIGAP)');
-    console.log(`Status code: 200`);
+    
+    console.log(chalk.green(`✅ Admin credentials dibuat (username: ${envUsername})`));
   }
 }
 
@@ -69,11 +113,13 @@ function getAdminCredentials() {
 
 // Update admin password
 function updateAdminPassword(newPassword) {
+  const envUsername = process.env.ADMIN_USERNAME || 'indra';
   const hashedPassword = bcrypt.hashSync(newPassword, 10);
   fs.writeFileSync(CREDS_FILE, JSON.stringify({
-    username: process.env.ADMIN_USERNAME || 'admin',
+    username: envUsername,
     password: hashedPassword
   }, null, 2));
+  console.log(chalk.green(`✅ Password admin berhasil diperbarui`));
 }
 
 // Global bot state
@@ -298,21 +344,99 @@ async function stopBot() {
 // Routes
 app.get('/', (req, res) => {
   if (req.session && req.session.loggedIn) return res.redirect('/dashboard');
-  res.render('login', { error: null });
+  res.render('login', { 
+    error: null, 
+    turnstileSiteKey: process.env.CLOUDFLARE_TURNSTILE_SITE_KEY || null 
+  });
 });
 
-app.post('/login', (req, res) => {
+app.post('/login', async (req, res) => {
   const { username, password } = req.body;
+  const turnstileResponse = req.body['cf-turnstile-response'];
+  const turnstileSiteKey = process.env.CLOUDFLARE_TURNSTILE_SITE_KEY;
+  const turnstileSecretKey = process.env.CLOUDFLARE_TURNSTILE_SECRET_KEY;
+
+  // Validasi Cloudflare Turnstile jika diaktifkan
+  if (turnstileSiteKey && turnstileSecretKey) {
+    if (!turnstileResponse) {
+      return res.render('login', { 
+        error: 'Captcha tidak valid. Silakan coba lagi.', 
+        turnstileSiteKey 
+      });
+    }
+
+    try {
+      // Verify Cloudflare Turnstile menggunakan https module
+      const verifyData = JSON.stringify({
+        secret: turnstileSecretKey,
+        response: turnstileResponse,
+        remoteip: req.ip || req.connection.remoteAddress
+      });
+
+      const verifyResult = await new Promise((resolve, reject) => {
+        const options = {
+          hostname: 'challenges.cloudflare.com',
+          port: 443,
+          path: '/turnstile/v0/siteverify',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': verifyData.length
+          }
+        };
+
+        const request = https.request(options, (response) => {
+          let data = '';
+          response.on('data', (chunk) => { data += chunk; });
+          response.on('end', () => {
+            try {
+              resolve(JSON.parse(data));
+            } catch (e) {
+              reject(new Error('Invalid JSON response'));
+            }
+          });
+        });
+
+        request.on('error', reject);
+        request.write(verifyData);
+        request.end();
+      });
+
+      if (!verifyResult.success) {
+        console.log(chalk.yellow('⚠️  Cloudflare Turnstile verification failed:'), verifyResult);
+        return res.render('login', { 
+          error: 'Verifikasi captcha gagal. Silakan coba lagi.', 
+          turnstileSiteKey 
+        });
+      }
+      
+      console.log(chalk.green('✅ Cloudflare Turnstile verified successfully'));
+    } catch (error) {
+      console.error(chalk.red('❌ Error verifying Cloudflare Turnstile:'), error.message);
+      return res.render('login', { 
+        error: 'Terjadi kesalahan saat verifikasi captcha.', 
+        turnstileSiteKey 
+      });
+    }
+  }
+
   const admin = getAdminCredentials();
 
-  if (!admin) return res.render('login', { error: 'Admin credentials not found' });
+  if (!admin) return res.render('login', { 
+    error: 'Admin credentials not found', 
+    turnstileSiteKey 
+  });
+  
   if (username === admin.username && bcrypt.compareSync(password, admin.password)) {
     req.session.loggedIn = true;
     req.session.username = username;
     return res.redirect('/dashboard');
   }
 
-  res.render('login', { error: 'Username atau password salah' });
+  res.render('login', { 
+    error: 'Username atau password salah', 
+    turnstileSiteKey 
+  });
 });
 
 app.get('/dashboard', requireAuth, (req, res) => {

@@ -108,7 +108,15 @@
             color: #666;
             font-size: 12px;
         }
+
+        .cf-turnstile {
+            display: flex;
+            justify-content: center;
+        }
     </style>
+    <% if (turnstileSiteKey) { %>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <% } %>
 </head>
 <body>
     <div class="login-container">
@@ -133,6 +141,12 @@
                 <label for="password">Password</label>
                 <input type="password" id="password" name="password" required autocomplete="current-password">
             </div>
+
+            <% if (turnstileSiteKey) { %>
+            <div class="form-group">
+                <div class="cf-turnstile" data-sitekey="<%= turnstileSiteKey %>" data-theme="light"></div>
+            </div>
+            <% } %>
 
             <button type="submit" class="btn-login">Login</button>
         </form>
