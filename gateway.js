@@ -8,16 +8,30 @@ const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
+const helmet = require('helmet');
+const cors = require('cors');
+const morgan = require('morgan');
+const os = require('os');
 
-dotenv.config();
+dotenv.config({
+  path: path.join(__dirname, '.env')
+})
 
-const logger = pino({ level: 'info' });
+const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const app = express();
 const PORT = process.env.GATEWAY_PORT || 3001;
+const API_PORT = Number(process.env.PORT || 3000);
+const API_KEY = process.env.API_KEY;
+
+// Queue & throttle config
+const GAP_MS = Number(process.env.SEND_GAP_MS || 250);
+const MAX_PER_REQ = Number(process.env.MAX_PER_REQ || 1500);
+const sendQueue = [];
+let queueRunning = false;
 
 // Session configuration
 app.use(session({
-  secret: 'whatsapp-gateway-secret-key-2025',
+  secret: process.env.SESSION_SECRET || 'whatsapp-gateway-secret',
   resave: false,
   saveUninitialized: false,
   cookie: { maxAge: 24 * 60 * 60 * 1000, httpOnly: true }
@@ -66,11 +80,94 @@ let phoneNumber = null;
 let isConnected = false;
 let connectionStatus = 'disconnected';
 
+// Helper functions
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function normalizePhoneTo62(raw) {
+  if (!raw) return null;
+  let p = String(raw).trim().replace(/[^\d+]/g, '');
+  if (p.startsWith('+')) p = p.slice(1);
+  if (p.startsWith('0')) p = '62' + p.slice(1);
+  if (!/^62\d{8,13}$/.test(p)) return null;
+  return p;
+}
+
+function toJid(raw) {
+  const n = normalizePhoneTo62(raw);
+  return n ? `${n}@s.whatsapp.net` : null;
+}
+
+function sanitizeText(input, maxLen = 5000) {
+  if (typeof input !== 'string') return '';
+  let s = input.replace(/\r/g, '').trim();
+  if (s.length > maxLen) s = s.slice(0, maxLen);
+  return s;
+}
+
+// Queue worker
+async function runQueue() {
+  if (queueRunning) return;
+  queueRunning = true;
+  try {
+    while (sendQueue.length) {
+      const task = sendQueue.shift();
+      try {
+        const r = await sock.sendMessage(task.jid, { text: task.text });
+        task.resolve({ ok: true, messageId: r?.key?.id || null });
+      } catch (e) {
+        task.resolve({ ok: false, error: e?.message || String(e) });
+      }
+      await sleep(GAP_MS);
+    }
+  } finally {
+    queueRunning = false;
+  }
+}
+
+function enqueueSend(jid, text) {
+  return new Promise((resolve) => {
+    sendQueue.push({ jid, text, resolve });
+    runQueue();
+  });
+}
+
 // Auth middleware
 function requireAuth(req, res, next) {
   if (req.session && req.session.loggedIn) return next();
   res.redirect('/');
 }
+
+// API Key middleware
+function requireApiKey(req, res, next) {
+  const key = req.header('X-API-Key') || req.query.key;
+  if (!API_KEY || key !== API_KEY) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+  return next();
+}
+
+morgan.token('statusColor', (req, res) => {
+  const status = res.statusCode;
+  if (status >= 500) {
+    return chalk.red(status);       // error server
+  } else if (status >= 400) {
+    return chalk.yellow(status);    // client error
+  } else if (status >= 300) {
+    return chalk.cyan(status);      // redirect
+  } else if (status >= 200) {
+    return chalk.green(status);     // sukses
+  }
+  return chalk.white(status);       // default
+});
+
+const customFormat = (tokens, req, res) => {
+  return [
+    chalk.gray(tokens.method(req, res)),
+    tokens.url(req, res),
+    tokens['statusColor'](req, res),
+    chalk.magenta(tokens['response-time'](req, res) + ' ms')
+  ].join(' ');
+};
 
 // Initialize WhatsApp Bot (QR only)
 async function initWhatsAppBot(phone) {
@@ -79,7 +176,8 @@ async function initWhatsAppBot(phone) {
     qrData = null;
     connectionStatus = 'connecting';
 
-    const sessionPath = path.join(__dirname, 'gateway_session');
+    // const sessionPath = path.join(__dirname, 'gateway_session');
+    const sessionPath = path.join(__dirname, process.env.SESSION || 'gateway_session');
     if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
@@ -90,7 +188,8 @@ async function initWhatsAppBot(phone) {
       logger,
       auth: state,
       printQRInTerminal: false, // QR hanya untuk web
-      syncFullHistory: false
+      syncFullHistory: false,
+      browser: ['WhatsApp Gateway SIGAP', 'Chrome', '10.0.0']
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -122,6 +221,22 @@ async function initWhatsAppBot(phone) {
       }
     });
 
+      sock.ev.on('call', async (calls) => {
+        for (const c of calls) {
+        if (c.status === 'offer') {
+            const participant = c.participants?.[0]?.tag || c.from;
+            try {
+            await sock.rejectCall(c.id, c.from, participant);
+            // const phone = (participant || c.from).split('@')[0];
+            // await sock.sendMessage(c.from, { text: `Panggilan dari https://wa.me/${phone} ditolak otomatis.` });
+            await sock.sendMessage(c.from, { text: `Nomor ini tidak dapat di telepon` });
+            } catch (err) {
+            console.error('Gagal menolak panggilan:', err);
+            }
+        }
+        }
+    });
+
     sock.ev.on('messages.upsert', ({ messages }) => {
       const m = messages?.[0];
       if (!m?.message || m.key.fromMe) return;
@@ -133,6 +248,13 @@ async function initWhatsAppBot(phone) {
 
       if (text?.toLowerCase() === 'ping') {
         sock.sendMessage(m.key.remoteJid, { text: '🏓 Pong! WhatsApp Gateway is active.' });
+      }
+      if (text?.toLowerCase() === 'status') {
+        const statusMsg = `📡 Status Gateway:\n\n` +
+                          `- Nomor: ${phoneNumber || 'Tidak terhubung'}\n` +
+                          `- Koneksi: ${isConnected ? 'Terhubung' : 'Tidak terhubung'}\n` +
+                          `- Status: ${connectionStatus}`;
+        sock.sendMessage(m.key.remoteJid, { text: statusMsg });
       }
     });
 
@@ -219,14 +341,151 @@ app.post('/change-password', requireAuth, (req, res) => {
 
 app.get('/logout', (req, res) => { req.session.destroy(); res.redirect('/'); });
 
-// Initialize and start server
+// ============================================================
+// API Endpoints (WhatsApp Gateway)
+// ============================================================
+const apiApp = express();
+
+apiApp.disable('x-powered-by');
+apiApp.use(helmet());
+apiApp.use(express.json({ limit: '10mb' }));
+apiApp.use(express.urlencoded({ extended: false, limit: '10mb' }));
+apiApp.use(morgan('tiny'));
+apiApp.use(morgan(customFormat));
+
+// CORS configuration
+const scheme = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+const lanIps = [];
+const nets = os.networkInterfaces();
+for (const name in nets) {
+  for (const iface of nets[name] || []) {
+    if (iface && iface.family === 'IPv4' && !iface.internal) {
+      lanIps.push(iface.address);
+    }
+  }
+}
+
+const allowedOrigins = [
+  `http://localhost:${API_PORT}`,
+  ...lanIps.map(addr => `${scheme}://${addr}:${API_PORT}`)
+];
+
+apiApp.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'));
+  },
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'X-API-Key']
+}));
+
+// Health check (no auth required)
+apiApp.get('/health', (req, res) => {
+  res.type('text/plain').send(`ok=${true}; ready=${isConnected}`);
+});
+
+// Status check (no auth required)
+apiApp.get('/status', (req, res) => {
+  res.json({
+    ok: true,
+    ready: isConnected,
+    phoneNumber: phoneNumber || null
+  });
+});
+
+// Apply API key middleware to all routes below
+apiApp.use(requireApiKey);
+
+// GET /pesan - Send single message via query params
+apiApp.get('/pesan', async (req, res) => {
+  try {
+    if (!isConnected) return res.status(503).json({ ok: false, error: 'wa_not_ready' });
+
+    const jid = toJid(req.query.wa);
+    const pesan = sanitizeText(req.query.pesan);
+    if (!jid || !pesan) return res.status(400).json({ ok: false, error: 'invalid_input' });
+
+    const result = await enqueueSend(jid, pesan);
+    return res.json({ 
+      ok: result.ok, 
+      to: req.query.wa, 
+      messageId: result.messageId || null, 
+      error: result.error || null 
+    });
+  } catch {
+    return res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// POST /pesan - Send message(s) via JSON body
+apiApp.post('/pesan', async (req, res) => {
+  try {
+    if (!isConnected) return res.status(503).json({ ok: false, error: 'wa_not_ready' });
+
+    const text = sanitizeText(req.body.pesan);
+    let list = req.body.wa;
+    if (!list || !text) return res.status(400).json({ ok: false, error: 'invalid_input' });
+
+    list = Array.isArray(list) ? list : [list];
+    if (list.length > MAX_PER_REQ) {
+      return res.status(413).json({ ok: false, error: 'too_many_recipients' });
+    }
+
+    const results = [];
+    for (const num of list) {
+      const jid = toJid(num);
+      if (!jid) {
+        results.push({ to: num, ok: false, error: 'invalid_wa' });
+        continue;
+      }
+      const r = await enqueueSend(jid, text);
+      results.push({ 
+        to: num, 
+        ok: r.ok, 
+        messageId: r.messageId || null, 
+        error: r.error || null 
+      });
+    }
+
+    return res.json({ ok: true, queued: results.length, results });
+  } catch {
+    return res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// Initialize and start servers
 initAdminCredentials();
 
 app.listen(PORT, () => {
   console.log('============================================================');
   console.log('WhatsApp Gateway - QR Only Version');
   console.log('============================================================');
-  console.log(`🌐 URL: http://localhost:${PORT}`);
+  console.log(`🌐 Dashboard: http://localhost:${PORT}`);
   console.log('   Login: username=indra, password=indra');
   console.log('============================================================');
+});
+
+apiApp.listen(API_PORT, () => {
+  console.log('============================================================');
+  console.log('WhatsApp API Gateway');
+  console.log('============================================================');
+  console.log(`🌐 API Server: http://localhost:${API_PORT}`);
+  lanIps.forEach(ipAddr => {
+    console.log(`   LAN IP: ${scheme}://${ipAddr}:${API_PORT}`);
+  });
+  console.log(`🔑 API Key: ${API_KEY || 'NOT SET'}`);
+  console.log('============================================================');
+  console.log('Endpoints:');
+  console.log('  GET  /health - Health check');
+  console.log('  GET  /status - Connection status');
+  console.log('  GET  /pesan?wa=628xxx&pesan=hello&key=YOUR_KEY');
+  console.log('  POST /pesan - JSON body: { wa: "628xxx", pesan: "hello" }');
+  console.log('============================================================');
+});
+
+process.on('SIGINT', async () => {
+  console.log('\n⚠️  Shutting down gracefully...');
+  if (sock) await sock.ws.close();
+  process.exit(0);
 });
