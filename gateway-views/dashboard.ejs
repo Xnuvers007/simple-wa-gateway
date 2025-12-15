@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - WhatsApp Gateway</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            font-size: 24px;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .username {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .btn-logout {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        .btn-logout:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+
+        .btn-secondary {
+            background: #95a5a6;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #7f8c8d;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 20px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-connecting {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 15px;
+            align-items: flex-end;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+        }
+
+        .pairing-code-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .pairing-code-box h3 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            opacity: 0.9;
+        }
+
+        .pairing-code {
+            font-size: 48px;
+            font-weight: bold;
+            letter-spacing: 8px;
+            margin: 10px 0;
+        }
+
+        .pairing-code-box p {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-top: 15px;
+        }
+
+        .qr-box {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            border: 2px solid #e1e8ed;
+            margin: 20px 0;
+        }
+
+        .qr-box img {
+            max-width: 300px;
+            width: 100%;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+
+        .info-box p {
+            color: #1565c0;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .connection-info {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .connection-info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #e1e8ed;
+        }
+
+        .connection-info-row:last-child {
+            border-bottom: none;
+        }
+
+        .connection-info-label {
+            font-weight: 600;
+            color: #666;
+        }
+
+        .connection-info-value {
+            color: #333;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📱 WhatsApp Gateway</h1>
+        <div class="header-right">
+            <span class="username">👤 <%= username %></span>
+            <a href="/logout" class="btn btn-logout">Logout</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="alert" class="alert"></div>
+
+        <div class="card">
+            <h2>📊 Status Koneksi</h2>
+            <div class="connection-info">
+                <div class="connection-info-row">
+                    <span class="connection-info-label">Status:</span>
+                    <span class="connection-info-value">
+                        <span class="status-badge status-<%= connectionStatus %>">
+                            <%= connectionStatus %>
+                        </span>
+                    </span>
+                </div>
+                <% if (phoneNumber) { %>
+                <div class="connection-info-row">
+                    <span class="connection-info-label">Nomor WhatsApp:</span>
+                    <span class="connection-info-value"><%= phoneNumber %></span>
+                </div>
+                <% } %>
+            </div>
+        </div>
+
+        <% if (!phoneNumber || !isConnected) { %>
+        <div class="card">
+            <h2>➕ Tambah Nomor WhatsApp</h2>
+            
+            <div class="info-box">
+                <p>
+                    <strong>Catatan:</strong><br>
+                    • Hanya bisa menambahkan 1 nomor WhatsApp<br>
+                    • Format nomor: 628xxxxx (awali dengan 62)<br>
+                    • Pilih metode: Pairing Code atau QR Code
+                </p>
+            </div>
+
+            <form id="connectForm">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="phone">Nomor WhatsApp</label>
+                        <input type="text" id="phone" name="phone" placeholder="628123456789" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="method">Metode</label>
+                        <select id="method" name="method">
+                            <option value="pairing">Pairing Code</option>
+                            <option value="qr">QR Code</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <button type="submit" class="btn btn-primary">Connect</button>
+                    </div>
+                </div>
+            </form>
+
+            <% if (pairingCode) { %>
+            <div class="pairing-code-box">
+                <h3>🔑 Pairing Code</h3>
+                <div class="pairing-code"><%= pairingCode %></div>
+                <p>Masukkan kode ini di WhatsApp:<br>
+                Menu → Linked Devices → Link a Device → Link with phone number instead</p>
+            </div>
+            <% } %>
+
+            <% if (qrData) { %>
+            <div class="qr-box">
+                <h3>📷 Scan QR Code</h3>
+                <img src="<%= qrData %>" alt="QR Code">
+                <p>Scan QR code ini dengan WhatsApp di HP Anda</p>
+            </div>
+            <% } %>
+        </div>
+        <% } %>
+
+        <% if (phoneNumber && isConnected) { %>
+        <div class="card">
+            <h2>✅ Bot Terhubung</h2>
+            
+            <div class="connection-info">
+                <div class="connection-info-row">
+                    <span class="connection-info-label">Nomor WhatsApp:</span>
+                    <span class="connection-info-value"><%= phoneNumber %></span>
+                </div>
+                <div class="connection-info-row">
+                    <span class="connection-info-label">Status:</span>
+                    <span class="connection-info-value">
+                        <span class="status-badge status-connected">Connected</span>
+                    </span>
+                </div>
+            </div>
+
+            <div class="info-box">
+                <p>
+                    <strong>Bot sudah siap menerima dan mengirim pesan!</strong><br>
+                    • Test dengan kirim pesan "ping" ke nomor bot<br>
+                    • Bot akan otomatis reply "Pong!"
+                </p>
+            </div>
+
+            <div class="button-group">
+                <button type="submit" onclick="disconnectBot()" class="btn btn-danger">🗑️ Hapus Nomor</button>
+            </div>
+        </div>
+        <% } %>
+
+        <div class="card">
+            <h2>🔐 Ganti Password</h2>
+            <form id="changePasswordForm">
+                <div class="form-group">
+                    <label for="currentPassword">Password Lama</label>
+                    <input type="password" id="currentPassword" name="currentPassword" required>
+                </div>
+                <div class="form-group">
+                    <label for="newPassword">Password Baru</label>
+                    <input type="password" id="newPassword" name="newPassword" required>
+                </div>
+                <div class="form-group">
+                    <label for="confirmPassword">Konfirmasi Password Baru</label>
+                    <input type="password" id="confirmPassword" name="confirmPassword" required>
+                </div>
+                <button type="submit" class="btn btn-secondary">Ganti Password</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Auto refresh status
+        setInterval(refreshStatus, 3000);
+
+        async function refreshStatus() {
+            try {
+                const res = await fetch('/status');
+                const data = await res.json();
+                if (data.ok && (data.isConnected || data.pairingCode || data.qrData)) {
+                    location.reload();
+                }
+            } catch (e) {
+                console.error('Status check error:', e);
+            }
+        }
+
+        // Connect form (check if exists)
+        const connectForm = document.getElementById('connectForm');
+        if (connectForm) {
+            connectForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const phone = document.getElementById('phone').value;
+                const method = document.getElementById('method').value;
+
+                showAlert('Menghubungkan...', 'success');
+
+                try {
+                    const res = await fetch('/connect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ phone, method })
+                    });
+                    const data = await res.json();
+
+                    if (data.ok) {
+                        showAlert('Berhasil! Tunggu sebentar...', 'success');
+                        setTimeout(() => location.reload(), 2000);
+                    } else {
+                        showAlert(data.error || 'Gagal menghubungkan', 'error');
+                    }
+                } catch (e) {
+                    showAlert('Error: ' + e.message, 'error');
+                }
+            });
+        }
+
+        // Disconnect bot
+        async function disconnectBot() {
+            if (!confirm('Yakin ingin menghapus nomor ini? Session akan dihapus.')) return;
+
+            try {
+                const res = await fetch('/disconnect', { method: 'POST' });
+                const data = await res.json();
+
+                if (data.ok) {
+                    showAlert('Nomor berhasil dihapus', 'success');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showAlert('Gagal menghapus nomor', 'error');
+                }
+            } catch (e) {
+                showAlert('Error: ' + e.message, 'error');
+            }
+        }
+
+        // Change password form
+        document.getElementById('changePasswordForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const currentPassword = document.getElementById('currentPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+
+            if (newPassword !== confirmPassword) {
+                showAlert('Password baru dan konfirmasi tidak sama', 'error');
+                return;
+            }
+
+            try {
+                const res = await fetch('/change-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ currentPassword, newPassword })
+                });
+                const data = await res.json();
+
+                if (data.ok) {
+                    showAlert('Password berhasil diubah!', 'success');
+                    document.getElementById('changePasswordForm').reset();
+                } else {
+                    showAlert(data.error || 'Gagal mengubah password', 'error');
+                }
+            } catch (e) {
+                showAlert('Error: ' + e.message, 'error');
+            }
+        });
+
+        function showAlert(message, type) {
+            const alert = document.getElementById('alert');
+            alert.textContent = message;
+            alert.className = `alert alert-${type}`;
+            alert.style.display = 'block';
+            setTimeout(() => {
+                alert.style.display = 'none';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>
