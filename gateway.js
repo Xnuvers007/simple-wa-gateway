@@ -12,6 +12,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
 const os = require('os');
+const chalk = require('chalk');
 
 dotenv.config({
   path: path.join(__dirname, '.env')
@@ -49,12 +50,14 @@ const CREDS_FILE = path.join(__dirname, 'admin-creds.json');
 // Initialize admin credentials
 function initAdminCredentials() {
   if (!fs.existsSync(CREDS_FILE)) {
-    const defaultPassword = bcrypt.hashSync('indra', 10);
+    // const defaultPassword = bcrypt.hashSync('BahrulUlum_2025#SIGAP', 10);
+    const defaultPassword = bcrypt.hashSync(process.env.ADMIN_PASSWORD || 'admin', 10);
     fs.writeFileSync(CREDS_FILE, JSON.stringify({
-      username: 'indra',
+      username: process.env.ADMIN_USERNAME || 'admin',
       password: defaultPassword
     }, null, 2));
-    console.log('✅ Admin credentials created (username: indra, password: indra)');
+    // console.log('✅ Admin credentials created (username: admin, password: BahrulUlum_2025#SIGAP)');
+    console.log(`Status code: 200`);
   }
 }
 
@@ -68,7 +71,7 @@ function getAdminCredentials() {
 function updateAdminPassword(newPassword) {
   const hashedPassword = bcrypt.hashSync(newPassword, 10);
   fs.writeFileSync(CREDS_FILE, JSON.stringify({
-    username: 'indra',
+    username: process.env.ADMIN_USERNAME || 'admin',
     password: hashedPassword
   }, null, 2));
 }
@@ -172,16 +175,28 @@ const customFormat = (tokens, req, res) => {
 // Initialize WhatsApp Bot (QR only)
 async function initWhatsAppBot(phone) {
   try {
-    phoneNumber = phone;
+    // Jika ada phone number yang diberikan, set phoneNumber
+    // Jika null (auto-load), akan diset dari state.creds.me nanti
+    if (phone) phoneNumber = phone;
+    
     qrData = null;
     connectionStatus = 'connecting';
 
-    // const sessionPath = path.join(__dirname, 'gateway_session');
     const sessionPath = path.join(__dirname, process.env.SESSION || 'gateway_session');
-    if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
+    
+    // Pastikan folder session ada
+    if (!fs.existsSync(sessionPath)) {
+      fs.mkdirSync(sessionPath, { recursive: true });
+    }
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
     const { version } = await fetchLatestBaileysVersion();
+    
+    // Jika auto-load (phone = null) dan ada session, ambil nomor dari state
+    if (!phone && state.creds?.me?.id) {
+      phoneNumber = state.creds.me.id.split(':')[0];
+      console.log(chalk.green(`📱 Memuat nomor dari sesi: ${phoneNumber}`));
+    }
 
     sock = makeWASocket({
       version,
@@ -276,7 +291,7 @@ async function stopBot() {
   phoneNumber = null;
   qrData = null;
 
-  const sessionPath = path.join(__dirname, 'gateway_session');
+  const sessionPath = path.join(__dirname, process.env.SESSION || 'gateway_session');
   if (fs.existsSync(sessionPath)) fs.rmSync(sessionPath, { recursive: true, force: true });
 }
 
@@ -454,6 +469,34 @@ apiApp.post('/pesan', async (req, res) => {
   }
 });
 
+// Auto-load existing session on startup
+async function autoLoadSession() {
+  try {
+    const sessionPath = path.join(__dirname, process.env.SESSION || 'gateway_session');
+    const credsPath = path.join(sessionPath, 'creds.json');
+    
+    // Cek apakah ada session yang tersimpan
+    if (fs.existsSync(credsPath)) {
+      const creds = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
+      
+      // Cek apakah sudah pernah login (ada data me/user)
+      if (creds.me && creds.me.id) {
+        console.log(chalk.cyan('🔄 Ditemukan sesi tersimpan, memuat otomatis...'));
+        console.log(chalk.gray(`   User: ${creds.me.id}`));
+        
+        // Load session tanpa parameter phone karena sudah ada
+        await initWhatsAppBot(null);
+      } else {
+        console.log(chalk.yellow('⚠️  Sesi ditemukan tapi belum lengkap. Silakan connect via dashboard.'));
+      }
+    } else {
+      console.log(chalk.gray('ℹ️  Tidak ada sesi tersimpan. Silakan connect via dashboard.'));
+    }
+  } catch (error) {
+    console.error(chalk.red('❌ Error saat memuat sesi:'), error.message);
+  }
+}
+
 // Initialize and start servers
 initAdminCredentials();
 
@@ -464,6 +507,9 @@ app.listen(PORT, () => {
   console.log(`🌐 Dashboard: http://localhost:${PORT}`);
   console.log('   Login: username=indra, password=indra');
   console.log('============================================================');
+  
+  // Auto-load session setelah server siap
+  autoLoadSession();
 });
 
 apiApp.listen(API_PORT, () => {
