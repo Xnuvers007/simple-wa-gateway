@@ -10,9 +10,9 @@
   "license": "ISC",
   "author": "sigap",
   "type": "commonjs",
-  "main": "gateway.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node gateway.js",
+    "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {

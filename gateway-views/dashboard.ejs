@@ -318,7 +318,7 @@
                     <strong>Catatan:</strong><br>
                     • Hanya bisa menambahkan 1 nomor WhatsApp<br>
                     • Format nomor: 628xxxxx (awali dengan 62)<br>
-                    • Pilih metode: Pairing Code atau QR Code
+                    • Scan QR Code dengan WhatsApp untuk login
                 </p>
             </div>
 
@@ -329,26 +329,10 @@
                         <input type="text" id="phone" name="phone" placeholder="628123456789" required>
                     </div>
                     <div class="form-group">
-                        <label for="method">Metode</label>
-                        <select id="method" name="method">
-                            <option value="pairing">Pairing Code</option>
-                            <option value="qr">QR Code</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <button type="submit" class="btn btn-primary">Connect</button>
+                        <button type="submit" class="btn btn-primary">Generate QR Code</button>
                     </div>
                 </div>
             </form>
-
-            <% if (pairingCode) { %>
-            <div class="pairing-code-box">
-                <h3>🔑 Pairing Code</h3>
-                <div class="pairing-code"><%= pairingCode %></div>
-                <p>Masukkan kode ini di WhatsApp:<br>
-                Menu → Linked Devices → Link a Device → Link with phone number instead</p>
-            </div>
-            <% } %>
 
             <% if (qrData) { %>
             <div class="qr-box">
@@ -419,7 +403,7 @@
             try {
                 const res = await fetch('/status');
                 const data = await res.json();
-                if (data.ok && (data.isConnected || data.pairingCode || data.qrData)) {
+                if (data.ok && (data.isConnected || data.qrData)) {
                     location.reload();
                 }
             } catch (e) {
@@ -433,23 +417,22 @@
             connectForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const phone = document.getElementById('phone').value;
-                const method = document.getElementById('method').value;
 
-                showAlert('Menghubungkan...', 'success');
+                showAlert('Generating QR Code...', 'success');
 
                 try {
                     const res = await fetch('/connect', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ phone, method })
+                        body: JSON.stringify({ phone })
                     });
                     const data = await res.json();
 
                     if (data.ok) {
-                        showAlert('Berhasil! Tunggu sebentar...', 'success');
+                        showAlert('QR Code berhasil di-generate!', 'success');
                         setTimeout(() => location.reload(), 2000);
                     } else {
-                        showAlert(data.error || 'Gagal menghubungkan', 'error');
+                        showAlert(data.error || 'Gagal generate QR Code', 'error');
                     }
                 } catch (e) {
                     showAlert('Error: ' + e.message, 'error');

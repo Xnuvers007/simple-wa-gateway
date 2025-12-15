@@ -1,9 +1,5 @@
 const makeWASocket = require('@whiskeysockets/baileys').default;
-const {
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  DisconnectReason
-} = require('@whiskeysockets/baileys');
+const { useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
@@ -24,10 +20,7 @@ app.use(session({
   secret: 'whatsapp-gateway-secret-key-2025',
   resave: false,
   saveUninitialized: false,
-  cookie: { 
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    httpOnly: true
-  }
+  cookie: { maxAge: 24 * 60 * 60 * 1000, httpOnly: true }
 }));
 
 app.use(express.urlencoded({ extended: true }));
@@ -36,7 +29,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'gateway-views'));
 app.use(express.static(path.join(__dirname, 'gateway-public')));
 
-// User credentials file
+// Admin credentials file
 const CREDS_FILE = path.join(__dirname, 'admin-creds.json');
 
 // Initialize admin credentials
@@ -53,9 +46,7 @@ function initAdminCredentials() {
 
 // Get admin credentials
 function getAdminCredentials() {
-  if (fs.existsSync(CREDS_FILE)) {
-    return JSON.parse(fs.readFileSync(CREDS_FILE, 'utf-8'));
-  }
+  if (fs.existsSync(CREDS_FILE)) return JSON.parse(fs.readFileSync(CREDS_FILE, 'utf-8'));
   return null;
 }
 
@@ -71,31 +62,25 @@ function updateAdminPassword(newPassword) {
 // Global bot state
 let sock = null;
 let qrData = null;
-let pairingCode = null;
 let phoneNumber = null;
 let isConnected = false;
 let connectionStatus = 'disconnected';
 
 // Auth middleware
 function requireAuth(req, res, next) {
-  if (req.session && req.session.loggedIn) {
-    return next();
-  }
+  if (req.session && req.session.loggedIn) return next();
   res.redirect('/');
 }
 
-// Initialize WhatsApp Bot
-async function initWhatsAppBot(phone, useQR = false) {
+// Initialize WhatsApp Bot (QR only)
+async function initWhatsAppBot(phone) {
   try {
     phoneNumber = phone;
     qrData = null;
-    pairingCode = null;
     connectionStatus = 'connecting';
 
     const sessionPath = path.join(__dirname, 'gateway_session');
-    if (!fs.existsSync(sessionPath)) {
-      fs.mkdirSync(sessionPath, { recursive: true });
-    }
+    if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
     const { version } = await fetchLatestBaileysVersion();
@@ -104,14 +89,18 @@ async function initWhatsAppBot(phone, useQR = false) {
       version,
       logger,
       auth: state,
-      printQRInTerminal: false,
+      printQRInTerminal: false, // QR hanya untuk web
       syncFullHistory: false
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    // Connection update handler
     sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+      if (qr) {
+        qrData = await qrcode.toDataURL(qr);
+        console.log('📱 QR Code generated');
+      }
+
       if (connection === 'open') {
         isConnected = true;
         connectionStatus = 'connected';
@@ -120,42 +109,18 @@ async function initWhatsAppBot(phone, useQR = false) {
         isConnected = false;
         connectionStatus = 'disconnected';
         const isLoggedOut = lastDisconnect?.error?.output?.statusCode === DisconnectReason.loggedOut;
-        const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.connectionClosed;
-        
         if (isLoggedOut) {
-          console.log('🚪 Logged out');
           sock = null;
-        } else if (shouldReconnect) {
+          console.log('🚪 Logged out');
+        } else {
           console.log('🔁 Reconnecting...');
           connectionStatus = 'reconnecting';
-          setTimeout(() => initWhatsAppBot(phone, useQR), 30000);
+          setTimeout(() => initWhatsAppBot(phone), 3000);
         }
       } else if (connection === 'connecting') {
         connectionStatus = 'connecting';
       }
-
-      // Generate QR code
-      if (qr && useQR) {
-        qrData = await qrcode.toDataURL(qr);
-        console.log('📱 QR Code generated');
-      }
     });
-
-    // Request pairing code AFTER connection is ready (for new devices only)
-    if (!useQR && !state.creds?.registered) {
-      // Wait for connection to be ready
-      setTimeout(async () => {
-        if (sock && connectionStatus === 'connecting') {
-          try {
-            const code = await sock.requestPairingCode(phone);
-            pairingCode = code;
-            console.log(`📲 Pairing code untuk ${phone}: ${code}`);
-          } catch (e) {
-            console.error('Gagal generate pairing code:', e);
-          }
-        }
-      }, 30000);
-    }
 
     sock.ev.on('messages.upsert', ({ messages }) => {
       const m = messages?.[0];
@@ -165,19 +130,13 @@ async function initWhatsAppBot(phone, useQR = false) {
         m.message?.extendedTextMessage?.text ||
         m.message?.imageMessage?.caption ||
         m.message?.videoMessage?.caption || '';
-      
-      if (text) {
-        console.log(`📩 Pesan dari ${m.key.remoteJid}: ${text}`);
-        
-        if (text.toLowerCase() === 'ping') {
-          sock.sendMessage(m.key.remoteJid, { 
-            text: '🏓 Pong! WhatsApp Gateway is active.' 
-          });
-        }
+
+      if (text?.toLowerCase() === 'ping') {
+        sock.sendMessage(m.key.remoteJid, { text: '🏓 Pong! WhatsApp Gateway is active.' });
       }
     });
 
-    return { ok: true, pairingCode, qrData };
+    return { ok: true, qrData };
   } catch (error) {
     console.error('Error initializing bot:', error);
     connectionStatus = 'error';
@@ -187,33 +146,21 @@ async function initWhatsAppBot(phone, useQR = false) {
 
 // Stop bot and clear session
 async function stopBot() {
-  try {
-    if (sock) {
-      await sock.logout();
-    }
-  } catch (e) {
-    console.log('Logout error:', e);
-  }
-  
+  try { if (sock) await sock.logout(); } catch (e) { console.log('Logout error:', e); }
+
   sock = null;
   isConnected = false;
   connectionStatus = 'disconnected';
   phoneNumber = null;
   qrData = null;
-  pairingCode = null;
 
-  // Delete session folder
   const sessionPath = path.join(__dirname, 'gateway_session');
-  if (fs.existsSync(sessionPath)) {
-    fs.rmSync(sessionPath, { recursive: true, force: true });
-  }
+  if (fs.existsSync(sessionPath)) fs.rmSync(sessionPath, { recursive: true, force: true });
 }
 
 // Routes
 app.get('/', (req, res) => {
-  if (req.session && req.session.loggedIn) {
-    return res.redirect('/dashboard');
-  }
+  if (req.session && req.session.loggedIn) return res.redirect('/dashboard');
   res.render('login', { error: null });
 });
 
@@ -221,10 +168,7 @@ app.post('/login', (req, res) => {
   const { username, password } = req.body;
   const admin = getAdminCredentials();
 
-  if (!admin) {
-    return res.render('login', { error: 'Admin credentials not found' });
-  }
-
+  if (!admin) return res.render('login', { error: 'Admin credentials not found' });
   if (username === admin.username && bcrypt.compareSync(password, admin.password)) {
     req.session.loggedIn = true;
     req.session.username = username;
@@ -238,7 +182,6 @@ app.get('/dashboard', requireAuth, (req, res) => {
   res.render('dashboard', {
     username: req.session.username,
     phoneNumber,
-    pairingCode,
     qrData,
     isConnected,
     connectionStatus
@@ -246,20 +189,11 @@ app.get('/dashboard', requireAuth, (req, res) => {
 });
 
 app.post('/connect', requireAuth, async (req, res) => {
-  const { phone, method } = req.body;
+  const { phone } = req.body;
+  if (!phone || !/^62\d{8,13}$/.test(phone)) return res.json({ ok: false, error: 'Format nomor tidak valid. Gunakan format 628xxxxx' });
+  if (phoneNumber && isConnected) return res.json({ ok: false, error: 'Sudah ada nomor yang terhubung. Hapus nomor terlebih dahulu.' });
 
-  if (!phone || !/^62\d{8,13}$/.test(phone)) {
-    return res.json({ ok: false, error: 'Format nomor tidak valid. Gunakan format 628xxxxx' });
-  }
-
-  // Only allow one connection
-  if (phoneNumber && isConnected) {
-    return res.json({ ok: false, error: 'Sudah ada nomor yang terhubung. Hapus nomor terlebih dahulu.' });
-  }
-
-  const useQR = method === 'qr';
-  const result = await initWhatsAppBot(phone, useQR);
-  
+  const result = await initWhatsAppBot(phone);
   res.json(result);
 });
 
@@ -269,43 +203,28 @@ app.post('/disconnect', requireAuth, async (req, res) => {
 });
 
 app.get('/status', requireAuth, (req, res) => {
-  res.json({
-    ok: true,
-    phoneNumber,
-    pairingCode,
-    qrData,
-    isConnected,
-    connectionStatus
-  });
+  res.json({ ok: true, phoneNumber, qrData, isConnected, connectionStatus });
 });
 
 app.post('/change-password', requireAuth, (req, res) => {
   const { currentPassword, newPassword } = req.body;
   const admin = getAdminCredentials();
 
-  if (!bcrypt.compareSync(currentPassword, admin.password)) {
-    return res.json({ ok: false, error: 'Password lama salah' });
-  }
-
-  if (newPassword.length < 4) {
-    return res.json({ ok: false, error: 'Password minimal 4 karakter' });
-  }
+  if (!bcrypt.compareSync(currentPassword, admin.password)) return res.json({ ok: false, error: 'Password lama salah' });
+  if (newPassword.length < 4) return res.json({ ok: false, error: 'Password minimal 4 karakter' });
 
   updateAdminPassword(newPassword);
   res.json({ ok: true, message: 'Password berhasil diubah' });
 });
 
-app.get('/logout', (req, res) => {
-  req.session.destroy();
-  res.redirect('/');
-});
+app.get('/logout', (req, res) => { req.session.destroy(); res.redirect('/'); });
 
 // Initialize and start server
 initAdminCredentials();
 
 app.listen(PORT, () => {
   console.log('============================================================');
-  console.log('WhatsApp Gateway - Simple Version');
+  console.log('WhatsApp Gateway - QR Only Version');
   console.log('============================================================');
   console.log(`🌐 URL: http://localhost:${PORT}`);
   console.log('   Login: username=indra, password=indra');
