@@ -2,6 +2,7 @@ const makeWASocket = require('@whiskeysockets/baileys').default;
 const { useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const session = require('express-session');
+const FileStore = require('session-file-store')(session);
 const bcrypt = require('bcryptjs');
 const qrcode = require('qrcode');
 const pino = require('pino');
@@ -24,6 +25,8 @@ const app = express();
 const PORT = process.env.GATEWAY_PORT || 3001;
 const API_PORT = Number(process.env.PORT || 3000);
 const API_KEY = process.env.API_KEY;
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 // Queue & throttle config
 const GAP_MS = Number(process.env.SEND_GAP_MS || 250);
@@ -33,6 +36,7 @@ let queueRunning = false;
 
 // Session configuration
 app.use(session({
+  store: new FileStore({ path: './sessions', logFn: function(){} }),
   secret: process.env.SESSION_SECRET || 'whatsapp-gateway-secret',
   resave: false,
   saveUninitialized: false,
@@ -52,30 +56,30 @@ const CREDS_FILE = path.join(__dirname, 'admin-creds.json');
 function initAdminCredentials() {
   const envUsername = process.env.ADMIN_USERNAME || 'indra';
   const envPassword = process.env.ADMIN_PASSWORD || 'indra';
-  
+
   // Cek apakah file admin-creds.json ada
   if (fs.existsSync(CREDS_FILE)) {
     try {
       const existingCreds = JSON.parse(fs.readFileSync(CREDS_FILE, 'utf-8'));
-      
+
       // Cek apakah username di .env berbeda dengan yang ada di file
       // Atau jika password di .env tidak match dengan hash yang ada
       const usernameChanged = existingCreds.username !== envUsername;
       const passwordValid = existingCreds.password && bcrypt.compareSync(envPassword, existingCreds.password);
-      
+
       if (usernameChanged || !passwordValid) {
         console.log(chalk.yellow('⚠️  Perubahan terdeteksi di .env, membuat ulang admin-creds.json...'));
-        
+
         // Hapus file lama
         fs.unlinkSync(CREDS_FILE);
-        
+
         // Buat file baru dengan credential dari .env
         const newPassword = bcrypt.hashSync(envPassword, 10);
         fs.writeFileSync(CREDS_FILE, JSON.stringify({
           username: envUsername,
           password: newPassword
         }, null, 2));
-        
+
         console.log(chalk.green(`✅ Admin credentials diperbarui (username: ${envUsername})`));
       } else {
         console.log(chalk.gray('ℹ️  Admin credentials sudah sesuai dengan .env'));
@@ -83,14 +87,14 @@ function initAdminCredentials() {
     } catch (error) {
       console.error(chalk.red('❌ Error membaca admin-creds.json, membuat ulang...'));
       fs.unlinkSync(CREDS_FILE);
-      
+
       // Buat file baru
       const newPassword = bcrypt.hashSync(envPassword, 10);
       fs.writeFileSync(CREDS_FILE, JSON.stringify({
         username: envUsername,
         password: newPassword
       }, null, 2));
-      
+
       console.log(chalk.green(`✅ Admin credentials dibuat (username: ${envUsername})`));
     }
   } else {
@@ -100,7 +104,7 @@ function initAdminCredentials() {
       username: envUsername,
       password: newPassword
     }, null, 2));
-    
+
     console.log(chalk.green(`✅ Admin credentials dibuat (username: ${envUsername})`));
   }
 }
@@ -181,8 +185,20 @@ function enqueueSend(jid, text) {
 }
 
 // Auth middleware
-function requireAuth(req, res, next) {
+/*function requireAuth(req, res, next) {
   if (req.session && req.session.loggedIn) return next();
+  res.redirect('/');
+}*/
+// Auth middleware (Versi Diperbaiki)
+function requireAuth(req, res, next) {
+  if (req.session && req.session.loggedIn) {
+    return next();
+  }
+
+  if (req.path === '/status' || req.headers.accept?.includes('json')) {
+    return res.status(401).json({ error: 'session_expired' });
+  }
+
   res.redirect('/');
 }
 
@@ -224,12 +240,12 @@ async function initWhatsAppBot(phone) {
     // Jika ada phone number yang diberikan, set phoneNumber
     // Jika null (auto-load), akan diset dari state.creds.me nanti
     if (phone) phoneNumber = phone;
-    
+
     qrData = null;
     connectionStatus = 'connecting';
 
     const sessionPath = path.join(__dirname, process.env.SESSION || 'gateway_session');
-    
+
     // Pastikan folder session ada
     if (!fs.existsSync(sessionPath)) {
       fs.mkdirSync(sessionPath, { recursive: true });
@@ -237,7 +253,7 @@ async function initWhatsAppBot(phone) {
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
     const { version } = await fetchLatestBaileysVersion();
-    
+
     // Jika auto-load (phone = null) dan ada session, ambil nomor dari state
     if (!phone && state.creds?.me?.id) {
       phoneNumber = state.creds.me.id.split(':')[0];
@@ -265,6 +281,21 @@ async function initWhatsAppBot(phone) {
         isConnected = true;
         connectionStatus = 'connected';
         console.log('✅ Terhubung ke WhatsApp');
+        if (qrData) {
+            console.log(chalk.yellow('🔄 Login baru terdeteksi via QR!'));
+            console.log(chalk.yellow('🔄 Me-restart sistem untuk memuat sesi baru...'));
+
+            // Tunggu 2 detik agar sesi tersimpan sempurna, lalu matikan proses
+            setTimeout(() => {
+                process.exit(0);
+                // process.exit(0) akan mematikan aplikasi.
+                // Karena Anda pakai PM2, PM2 akan otomatis menyalakannya lagi (Auto Restart).
+            }, 2000);
+        }
+        // --- AKHIR TAMBAHAN ---
+
+        // Reset QR Data agar tidak restart terus menerus
+        qrData = null;
       } else if (connection === 'close') {
         isConnected = false;
         connectionStatus = 'disconnected';
@@ -344,9 +375,9 @@ async function stopBot() {
 // Routes
 app.get('/', (req, res) => {
   if (req.session && req.session.loggedIn) return res.redirect('/dashboard');
-  res.render('login', { 
-    error: null, 
-    turnstileSiteKey: process.env.CLOUDFLARE_TURNSTILE_SITE_KEY || null 
+  res.render('login', {
+    error: null,
+    turnstileSiteKey: process.env.CLOUDFLARE_TURNSTILE_SITE_KEY || null
   });
 });
 
@@ -359,9 +390,9 @@ app.post('/login', async (req, res) => {
   // Validasi Cloudflare Turnstile jika diaktifkan
   if (turnstileSiteKey && turnstileSecretKey) {
     if (!turnstileResponse) {
-      return res.render('login', { 
-        error: 'Captcha tidak valid. Silakan coba lagi.', 
-        turnstileSiteKey 
+      return res.render('login', {
+        error: 'Captcha tidak valid. Silakan coba lagi.',
+        turnstileSiteKey
       });
     }
 
@@ -404,38 +435,38 @@ app.post('/login', async (req, res) => {
 
       if (!verifyResult.success) {
         console.log(chalk.yellow('⚠️  Cloudflare Turnstile verification failed:'), verifyResult);
-        return res.render('login', { 
-          error: 'Verifikasi captcha gagal. Silakan coba lagi.', 
-          turnstileSiteKey 
+        return res.render('login', {
+          error: 'Verifikasi captcha gagal. Silakan coba lagi.',
+          turnstileSiteKey
         });
       }
-      
+
       console.log(chalk.green('✅ Cloudflare Turnstile verified successfully'));
     } catch (error) {
       console.error(chalk.red('❌ Error verifying Cloudflare Turnstile:'), error.message);
-      return res.render('login', { 
-        error: 'Terjadi kesalahan saat verifikasi captcha.', 
-        turnstileSiteKey 
+      return res.render('login', {
+        error: 'Terjadi kesalahan saat verifikasi captcha.',
+        turnstileSiteKey
       });
     }
   }
 
   const admin = getAdminCredentials();
 
-  if (!admin) return res.render('login', { 
-    error: 'Admin credentials not found', 
-    turnstileSiteKey 
+  if (!admin) return res.render('login', {
+    error: 'Admin credentials not found',
+    turnstileSiteKey
   });
-  
+
   if (username === admin.username && bcrypt.compareSync(password, admin.password)) {
     req.session.loggedIn = true;
     req.session.username = username;
     return res.redirect('/dashboard');
   }
 
-  res.render('login', { 
-    error: 'Username atau password salah', 
-    turnstileSiteKey 
+  res.render('login', {
+    error: 'Username atau password salah',
+    turnstileSiteKey
   });
 });
 
@@ -546,11 +577,11 @@ apiApp.get('/pesan', async (req, res) => {
     if (!jid || !pesan) return res.status(400).json({ ok: false, error: 'invalid_input' });
 
     const result = await enqueueSend(jid, pesan);
-    return res.json({ 
-      ok: result.ok, 
-      to: req.query.wa, 
-      messageId: result.messageId || null, 
-      error: result.error || null 
+    return res.json({
+      ok: result.ok,
+      to: req.query.wa,
+      messageId: result.messageId || null,
+      error: result.error || null
     });
   } catch {
     return res.status(500).json({ ok: false, error: 'server_error' });
@@ -579,11 +610,11 @@ apiApp.post('/pesan', async (req, res) => {
         continue;
       }
       const r = await enqueueSend(jid, text);
-      results.push({ 
-        to: num, 
-        ok: r.ok, 
-        messageId: r.messageId || null, 
-        error: r.error || null 
+      results.push({
+        to: num,
+        ok: r.ok,
+        messageId: r.messageId || null,
+        error: r.error || null
       });
     }
 
@@ -598,16 +629,16 @@ async function autoLoadSession() {
   try {
     const sessionPath = path.join(__dirname, process.env.SESSION || 'gateway_session');
     const credsPath = path.join(sessionPath, 'creds.json');
-    
+
     // Cek apakah ada session yang tersimpan
     if (fs.existsSync(credsPath)) {
       const creds = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
-      
+
       // Cek apakah sudah pernah login (ada data me/user)
       if (creds.me && creds.me.id) {
         console.log(chalk.cyan('🔄 Ditemukan sesi tersimpan, memuat otomatis...'));
         console.log(chalk.gray(`   User: ${creds.me.id}`));
-        
+
         // Load session tanpa parameter phone karena sudah ada
         await initWhatsAppBot(null);
       } else {
@@ -629,9 +660,9 @@ app.listen(PORT, () => {
   console.log('WhatsApp Gateway - QR Only Version');
   console.log('============================================================');
   console.log(`🌐 Dashboard: http://localhost:${PORT}`);
-  console.log('   Login: username=indra, password=indra');
+  console.log(`   Login: username=${ADMIN_USERNAME || 'NOT SET'}, password=${ADMIN_PASSWORD || 'NOT SET'}`);
   console.log('============================================================');
-  
+
   // Auto-load session setelah server siap
   autoLoadSession();
 });
