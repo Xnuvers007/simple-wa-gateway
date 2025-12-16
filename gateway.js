@@ -281,21 +281,6 @@ async function initWhatsAppBot(phone) {
         isConnected = true;
         connectionStatus = 'connected';
         console.log('✅ Terhubung ke WhatsApp');
-        if (qrData) {
-            console.log(chalk.yellow('🔄 Login baru terdeteksi via QR!'));
-            console.log(chalk.yellow('🔄 Me-restart sistem untuk memuat sesi baru...'));
-
-            // Tunggu 2 detik agar sesi tersimpan sempurna, lalu matikan proses
-            setTimeout(() => {
-                process.exit(0);
-                // process.exit(0) akan mematikan aplikasi.
-                // Karena Anda pakai PM2, PM2 akan otomatis menyalakannya lagi (Auto Restart).
-            }, 2000);
-        }
-        // --- AKHIR TAMBAHAN ---
-
-        // Reset QR Data agar tidak restart terus menerus
-        qrData = null;
       } else if (connection === 'close') {
         isConnected = false;
         connectionStatus = 'disconnected';
