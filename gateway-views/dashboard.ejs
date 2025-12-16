@@ -312,7 +312,7 @@
         <% if (!phoneNumber || !isConnected) { %>
         <div class="card">
             <h2>➕ Tambah Nomor WhatsApp</h2>
-            
+
             <div class="info-box">
                 <p>
                     <strong>Catatan:</strong><br>
@@ -347,7 +347,7 @@
         <% if (phoneNumber && isConnected) { %>
         <div class="card">
             <h2>✅ Bot Terhubung</h2>
-            
+
             <div class="connection-info">
                 <div class="connection-info-row">
                     <span class="connection-info-label">Nomor WhatsApp:</span>
@@ -399,7 +399,7 @@
         // Auto refresh status
         setInterval(refreshStatus, 3000);
 
-        async function refreshStatus() {
+/*        async function refreshStatus() {
             try {
                 const res = await fetch('/status');
                 const data = await res.json();
@@ -410,6 +410,42 @@
                 console.error('Status check error:', e);
             }
         }
+*/
+async function refreshStatus() {
+            try {
+                const res = await fetch('/status', {
+                    headers: { 'Accept': 'application/json' } // Memberitahu server kita minta JSON
+                });
+
+                // --- LOGIKA BARU UNTUK AUTO LOGOUT ---
+                // Jika server merespon 401 (Unauthorized) atau url berubah jadi login
+                if (res.status === 401 || res.redirected || res.url.includes('login')) {
+                    console.log('Session expired, reloading...');
+                    window.location.reload(); // Ini akan menendang user ke halaman Login
+                    return;
+                }
+                // -------------------------------------
+
+                const data = await res.json();
+
+                // Cek jika status berubah jadi connected, baru reload
+                // (Opsional: logic asli Anda tetap dipertahankan di sini)
+                if (data.ok && (data.isConnected || data.qrData)) {
+                     // Kita cek dulu apakah elemen QR masih ada, kalau masih ada dan status sudah connected, reload
+                     const qrBox = document.querySelector('.qr-box');
+                     if (data.isConnected && qrBox) {
+                        location.reload();
+                     }
+                }
+            } catch (e) {
+                console.error('Status check error:', e);
+                // Jika error karena parsing JSON (biasanya karena dapet HTML login), reload aja
+                if (e.name === 'SyntaxError') {
+                    window.location.reload();
+                }
+            }
+        }
+
 
         // Connect form (check if exists)
         const connectForm = document.getElementById('connectForm');
