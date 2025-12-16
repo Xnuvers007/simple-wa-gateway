@@ -146,7 +146,7 @@ package-lock.json
 gateway_session/
 
 # Sessions & Database
-sessions/
+./sessions
 *.db
 
 # Logs
