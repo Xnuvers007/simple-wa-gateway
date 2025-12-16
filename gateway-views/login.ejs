@@ -117,6 +117,33 @@
             display: flex;
             justify-content: center;
         }
+
+.input-wrapper {
+            position: relative;
+            width: 100%;
+        }
+
+        .input-wrapper input[type="password"],
+        .input-wrapper input[type="text"] {
+            padding-right: 45px !important;
+        }
+
+        .toggle-password-btn {
+            position: absolute;
+            right: 15px;
+            /* Posisikan di tengah vertikal input */
+            top: 50%; 
+            transform: translateY(-50%);
+            cursor: pointer;
+            font-size: 18px;
+            color: #667eea;
+            user-select: none;
+            z-index: 10;
+        }
+
+        .toggle-password-btn:hover {
+            color: #764ba2;
+        }
     </style>
     <% if (turnstileSiteKey) { %>
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
@@ -143,7 +170,10 @@
 
             <div class="form-group">
                 <label for="password">Password</label>
-                <input type="password" id="password" name="password" required autocomplete="current-password">
+                <div class="input-wrapper">
+                    <input type="password" id="password" name="password" required autocomplete="current-password">
+                    <span id="togglePassword" class="toggle-password-btn">👁️</span>
+                </div>
             </div>
 
             <% if (turnstileSiteKey) { %>
@@ -160,6 +190,18 @@
         </div>
     </div>
 <script>
+
+const togglePassword = document.querySelector('#togglePassword');
+        const password = document.querySelector('#password');
+
+        if (togglePassword && password) {
+            togglePassword.addEventListener('click', function (e) {
+                const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
+                password.setAttribute('type', type);
+                this.textContent = type === 'password' ? '👁️' : '🙈';
+            });
+        }
+
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/sw.js')
@@ -170,5 +212,6 @@
 </script>
 </body>
 </html>
+
 
 
